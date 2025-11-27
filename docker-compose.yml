@@ -1,0 +1,106 @@
+version: '3.8'
+
+# 应用服务器2 (96.44.147.237)
+# 角色: Redis Slave + Sentinel + Claude Relay 实例
+# 最佳方案：桥接网络 + 端口绑定到 WireGuard IP（最安全）
+
+networks:
+  claude_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+services:
+  # Redis Slave (复制 Master)
+  redis-slave:
+    image: redis:7-alpine
+    container_name: redis-slave
+    restart: unless-stopped
+    command: >
+      redis-server
+      --bind 0.0.0.0
+      --port 6379
+      --protected-mode no
+      --save 60 1
+      --appendonly yes
+      --appendfsync everysec
+      --requirepass ${REDIS_PASSWORD}
+      --masterauth ${REDIS_PASSWORD}
+      --replicaof 10.0.0.2 6379
+    volumes:
+      - ./redis/slave-data:/data
+    networks:
+      claude_net:
+        ipv4_address: 172.20.0.3
+    ports:
+      - "10.0.0.3:6379:6379"  # 只绑定到 WireGuard IP
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Redis Sentinel
+  redis-sentinel:
+    image: redis:7-alpine
+    container_name: redis-sentinel
+    restart: unless-stopped
+    command: |
+      sh -c 'printf "port 26379\nsentinel monitor mymaster 10.0.0.2 6379 2\nsentinel auth-pass mymaster ${REDIS_PASSWORD}\nsentinel down-after-milliseconds mymaster 5000\nsentinel parallel-syncs mymaster 1\nsentinel failover-timeout mymaster 10000\nbind 0.0.0.0\nprotected-mode no\nsentinel announce-ip 10.0.0.3\nsentinel announce-port 26379\n" > /tmp/sentinel.conf && redis-sentinel /tmp/sentinel.conf'
+    depends_on:
+      - redis-slave
+    networks:
+      claude_net:
+        ipv4_address: 172.20.0.13
+    ports:
+      - "10.0.0.3:26379:26379"  # 只绑定到 WireGuard IP
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Claude Relay Service
+  claude-relay:
+    image: summer379979741/claude-relay-service:sentinel-tencent-ses
+    container_name: claude-relay
+    restart: unless-stopped
+    environment:
+      # 服务器配置
+      - NODE_ENV=production
+      - PORT=3000
+      - HOST=0.0.0.0
+      - TRUST_PROXY=true
+
+      # 安全配置
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+
+      # Redis Sentinel 配置
+      - REDIS_SENTINEL_ENABLED=true
+      - REDIS_SENTINEL_HOSTS=10.0.0.2:26379,10.0.0.3:26379,10.0.0.1:26379
+      - REDIS_SENTINEL_MASTER_NAME=mymaster
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_DB=0
+
+      # 其他配置
+      - LOG_LEVEL=info
+      - CLEANUP_INTERVAL=3600000
+      - TIMEZONE_OFFSET=8
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    networks:
+      claude_net:
+        ipv4_address: 172.20.0.11
+    ports:
+      - "10.0.0.3:3000:3000"  # 只绑定到 WireGuard IP（最安全）
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      - redis-slave
+      - redis-sentinel

@@ -1,0 +1,9 @@
+# Runtime data
+data/
+logs/
+redis/
+
+# Backup files
+*.backup
+*.bak
+docker-compose.yml.backup.*
