@@ -15,8 +15,6 @@
 
 ## 网络架构
 
-## 网络架构
-
 **WireGuard VPN 网络 (10.0.0.0/24)**：
 - 10.0.0.1 - 堡垒机（Nginx + Sentinel）
 - 10.0.0.2 - Server1（Redis + Sentinel + Claude Relay）
@@ -247,13 +245,13 @@ Claude Relay 服务镜像（`summer379979741/claude-relay-service:latest`）单�
 **验证网络配置**:
 ```bash
 # 检查容器网络模式
-docker inspect redis-node1 --format='{{.HostConfig.NetworkMode}}'  # 应显示 "claude-relay_wireguard"
+docker inspect redis-node2 --format='{{.HostConfig.NetworkMode}}'  # 应显示 "claude-relay_wireguard"
 
 # 检查 bridge 网络子网
 docker network inspect claude-relay_wireguard --format="{{range .IPAM.Config}}{{.Subnet}}{{end}}"  # 应显示 "172.20.0.0/24"
 
 # 检查容器 IP 地址
-docker inspect redis-node1 --format="{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"  # Server1: "172.20.0.2", Server2: "172.20.0.3"
+docker inspect redis-node2 --format="{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"  # Server2 应显示 "172.20.0.3"
 ```
 
 ## 容器命名规范

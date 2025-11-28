@@ -28,6 +28,8 @@ services:
       --requirepass ${REDIS_PASSWORD}
       --masterauth ${REDIS_PASSWORD}
       --replicaof 10.0.0.2 6379
+      --replica-announce-ip 10.0.0.3
+      --replica-announce-port 6379
     volumes:
       - ./redis/node2-data:/data
     networks:
