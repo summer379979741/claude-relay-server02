@@ -2,20 +2,20 @@ version: '3.8'
 
 # 应用服务器2 (96.44.147.237)
 # 角色: Redis Slave + Sentinel + Claude Relay 实例
-# 最佳方案：桥接网络 + 端口绑定到 WireGuard IP（最安全）
+# 网络方案：桥接网络 (172.20.0.0/24) + 端口绑定到 WireGuard IP (10.0.0.3)
 
 networks:
-  claude_net:
+  wireguard:
     driver: bridge
     ipam:
       config:
         - subnet: 172.20.0.0/24
 
 services:
-  # Redis Slave (复制 Master)
-  redis-slave:
+  # Redis Node 2 (初始为 Slave 角色)
+  redis-node2:
     image: redis:7-alpine
-    container_name: redis-slave
+    container_name: redis-node2
     restart: unless-stopped
     command: >
       redis-server
@@ -29,9 +29,9 @@ services:
       --masterauth ${REDIS_PASSWORD}
       --replicaof 10.0.0.2 6379
     volumes:
-      - ./redis/slave-data:/data
+      - ./redis/node2-data:/data
     networks:
-      claude_net:
+      wireguard:
         ipv4_address: 172.20.0.3
     ports:
       - "10.0.0.3:6379:6379"  # 只绑定到 WireGuard IP
@@ -41,17 +41,17 @@ services:
       timeout: 3s
       retries: 5
 
-  # Redis Sentinel
-  redis-sentinel:
+  # Sentinel Node 2 (监控 Redis 集群)
+  sentinel-node2:
     image: redis:7-alpine
-    container_name: redis-sentinel
+    container_name: sentinel-node2
     restart: unless-stopped
     command: |
       sh -c 'printf "port 26379\nsentinel monitor mymaster 10.0.0.2 6379 2\nsentinel auth-pass mymaster ${REDIS_PASSWORD}\nsentinel down-after-milliseconds mymaster 5000\nsentinel parallel-syncs mymaster 1\nsentinel failover-timeout mymaster 10000\nbind 0.0.0.0\nprotected-mode no\nsentinel announce-ip 10.0.0.3\nsentinel announce-port 26379\n" > /tmp/sentinel.conf && redis-sentinel /tmp/sentinel.conf'
     depends_on:
-      - redis-slave
+      - redis-node2
     networks:
-      claude_net:
+      wireguard:
         ipv4_address: 172.20.0.13
     ports:
       - "10.0.0.3:26379:26379"  # 只绑定到 WireGuard IP
@@ -63,7 +63,7 @@ services:
 
   # Claude Relay Service
   claude-relay:
-    image: summer379979741/claude-relay-service:sentinel-tencent-ses
+    image: summer379979741/claude-relay-service:latest
     container_name: claude-relay
     restart: unless-stopped
     environment:
@@ -92,15 +92,15 @@ services:
       - ./logs:/app/logs
       - ./data:/app/data
     networks:
-      claude_net:
+      wireguard:
         ipv4_address: 172.20.0.11
     ports:
-      - "10.0.0.3:3000:3000"  # 只绑定到 WireGuard IP（最安全）
+      - "10.0.0.3:3000:3000"  # 只绑定到 WireGuard IP
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
     depends_on:
-      - redis-slave
-      - redis-sentinel
+      - redis-node2
+      - sentinel-node2
